@@ -24,6 +24,8 @@ class GameScreen extends StatefulWidget {
 
 class _GameScreenState extends State<GameScreen> {
   PlayingCard? _selectedCard;
+  PlayingCard? _draggedCard;
+  Offset _dragOffset = Offset.zero;
   final Map<String, Offset> _throwingCards = {};
   List<TrickPlay> _lastObservedTrick = [];
 
@@ -32,11 +34,11 @@ class _GameScreenState extends State<GameScreen> {
       case 0:
         return Offset(size.width / 2, size.height - 45); // You
       case 1:
-        return Offset(size.width - 45, size.height / 2 - 20); // Right
+        return Offset(size.width - 28, size.height / 2 - 20); // Right
       case 2:
-        return Offset(size.width / 2, 42); // Top
+        return Offset(size.width / 2, 32); // Top
       case 3:
-        return Offset(45, size.height / 2 - 20); // Left
+        return Offset(28, size.height / 2 - 20); // Left
       default:
         return Offset(size.width / 2, size.height / 2);
     }
@@ -102,6 +104,8 @@ class _GameScreenState extends State<GameScreen> {
                 SafeArea(
                   top: false,
                   bottom: false,
+                  left: false,
+                  right: false,
                   child: Stack(
                     children: [
                       // ── Top Left: Wooden Notepad Button (2/5 Scoreboard) ──
@@ -148,7 +152,7 @@ class _GameScreenState extends State<GameScreen> {
 
                       // ── Left Player: bot1 (pushed back to far left edge) ──
                       Positioned(
-                        left: 6,
+                        left: 4,
                         top: 0,
                         bottom: 84,
                         child: IgnorePointer(
@@ -171,7 +175,7 @@ class _GameScreenState extends State<GameScreen> {
 
                       // ── Right Player: bot2 (pushed back to far right edge) ──
                       Positioned(
-                        right: 6,
+                        right: 4,
                         top: 0,
                         bottom: 84,
                         child: IgnorePointer(
@@ -254,9 +258,9 @@ class _GameScreenState extends State<GameScreen> {
                       },
                       seatTargetOffsets: {
                         0: Offset(screenSize.width / 2, screenSize.height - 45),
-                        1: Offset(screenSize.width - 45, screenSize.height / 2 - 20),
-                        2: Offset(screenSize.width / 2, 42),
-                        3: Offset(45, screenSize.height / 2 - 20),
+                        1: Offset(screenSize.width - 28, screenSize.height / 2 - 20),
+                        2: Offset(screenSize.width / 2, 32),
+                        3: Offset(28, screenSize.height / 2 - 20),
                       },
                       onCompleted: () {},
                     ),
@@ -552,6 +556,26 @@ class _GameScreenState extends State<GameScreen> {
         alignment: Alignment.bottomCenter,
         clipBehavior: Clip.none,
         children: [
+          // Center Avatar: YOU (rendered behind cards with IgnorePointer)
+          Positioned(
+            bottom: 8,
+            child: IgnorePointer(
+              child: CallbreakPlayerAvatar(
+                seat: 0,
+                name: game.players[0].name,
+                avatarPath: game.players[0].avatarPath,
+                flag: game.players[0].flag,
+                bid: game.players[0].bid,
+                tricksWon: game.players[0].tricksWon,
+                isActive: isHumanTurn,
+                isDealer: game.dealer == 0,
+                isHuman: true,
+                cardCount: hand.length,
+                activeEmote: game.activeEmotes[0],
+              ),
+            ),
+          ),
+
           // Hand cards spanning across the bottom (matching Screenshot 3)
           Positioned(
             bottom: 0,
@@ -568,24 +592,6 @@ class _GameScreenState extends State<GameScreen> {
                 highlightValidCards: game.highlightValidCards,
                 onCardTap: (card) => _onCardTap(context, game, card),
               ),
-            ),
-          ),
-
-          // Center Avatar: YOU (centered over cards matching Screenshot 3)
-          Positioned(
-            bottom: 8,
-            child: CallbreakPlayerAvatar(
-              seat: 0,
-              name: game.players[0].name,
-              avatarPath: game.players[0].avatarPath,
-              flag: game.players[0].flag,
-              bid: game.players[0].bid,
-              tricksWon: game.players[0].tricksWon,
-              isActive: isHumanTurn,
-              isDealer: game.dealer == 0,
-              isHuman: true,
-              cardCount: hand.length,
-              activeEmote: game.activeEmotes[0],
             ),
           ),
         ],
@@ -617,41 +623,123 @@ class _GameScreenState extends State<GameScreen> {
         : 0.0;
     final totalW = cardW + (count - 1) * spacing;
 
+    // Keep all cards in tree with ValueKey(card.id); order so dragging card is on top
+    final renderCards = List<PlayingCard>.from(hand);
+    if (_draggedCard != null && renderCards.contains(_draggedCard)) {
+      renderCards.remove(_draggedCard);
+      renderCards.add(_draggedCard!);
+    }
+
     return SizedBox(
       width: totalW,
       height: cardH + 18,
       child: Stack(
         clipBehavior: Clip.none,
-        children: List.generate(count, (i) {
-          final card = hand[i];
+        children: renderCards.map((card) {
+          final originalIdx = hand.indexOf(card);
           final isLegal = legalMoves.contains(card);
           final isSelected = selectedCard == card;
-          // Only dim illegal cards when highlighting is ON and it's the player's turn
+          final isDragging = _draggedCard == card;
+          final isThrowReady = isDragging && _dragOffset.dy < -25;
           final showHighlight = canPlay && highlightValidCards;
+          final currentOffset = isDragging ? _dragOffset : Offset.zero;
 
-          return AnimatedPositioned(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOutQuad,
-            left: i * spacing,
-            bottom: isSelected ? 16 : 0,
-            child: AnimatedScale(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOutQuad,
-              scale: isSelected ? 1.05 : 1.0,
+          return Positioned(
+            key: ValueKey(card.id),
+            left: originalIdx * spacing + currentOffset.dx,
+            bottom: isDragging
+                ? (-currentOffset.dy).clamp(0.0, 350.0)
+                : (isSelected ? 16.0 : 0.0),
+            child: Transform.scale(
+              scale: isThrowReady ? 1.15 : (isDragging ? 1.08 : (isSelected ? 1.05 : 1.0)),
               child: PlayingCardWidget(
                 card: card,
                 width: cardW,
                 height: cardH,
                 isFaceDown: isDealing,
                 isLegal: showHighlight ? isLegal : true,
-                isSelected: isSelected,
+                isSelected: isThrowReady || isSelected,
                 onTap: () => onCardTap(card),
+                onPanStart: (details) => _onCardPanStart(card, details),
+                onPanUpdate: (details) => _onCardPanUpdate(card, details),
+                onPanEnd: (details) => _onCardPanEnd(context, card, details),
+                onPanCancel: _onCardPanCancel,
               ),
             ),
           );
-        }),
+        }).toList(),
       ),
     );
+  }
+
+  void _onCardPanStart(PlayingCard card, DragStartDetails details) {
+    final game = Provider.of<GameController>(context, listen: false);
+    if (game.phase != GamePhase.playing || !game.isHumanTurn) return;
+
+    setState(() {
+      _draggedCard = card;
+      _dragOffset = Offset.zero;
+    });
+    HapticFeedback.selectionClick();
+  }
+
+  void _onCardPanUpdate(PlayingCard card, DragUpdateDetails details) {
+    if (_draggedCard != card) return;
+    setState(() {
+      _dragOffset = Offset(
+        (_dragOffset.dx + details.delta.dx).clamp(-180.0, 180.0),
+        (_dragOffset.dy + details.delta.dy).clamp(-350.0, 10.0),
+      );
+    });
+  }
+
+  void _onCardPanEnd(BuildContext context, PlayingCard card, DragEndDetails details) {
+    if (_draggedCard != card) return;
+    final game = Provider.of<GameController>(context, listen: false);
+
+    final isThrow = _dragOffset.dy < -25 || details.velocity.pixelsPerSecond.dy < -80;
+    if (isThrow && game.phase == GamePhase.playing && game.isHumanTurn) {
+      final isLegal = game.legalMoves.contains(card);
+      if (isLegal) {
+        setState(() {
+          _draggedCard = null;
+          _dragOffset = Offset.zero;
+          _selectedCard = null;
+        });
+        HapticFeedback.mediumImpact();
+        SoundService.instance.playCardSlide();
+        game.humanPlayCard(card);
+        return;
+      } else {
+        HapticFeedback.heavyImpact();
+        SoundService.instance.playButtonClick();
+        final leadSuit = game.currentTrick.isNotEmpty ? game.currentTrick.first.card.suit : null;
+        final msg = leadSuit != null
+            ? 'Must follow ${leadSuit.name}!'
+            : 'Invalid move!';
+        ScaffoldMessenger.of(context).removeCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(msg),
+            duration: const Duration(milliseconds: 1000),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+
+    // Snapping back if not thrown or illegal
+    setState(() {
+      _draggedCard = null;
+      _dragOffset = Offset.zero;
+    });
+  }
+
+  void _onCardPanCancel() {
+    setState(() {
+      _draggedCard = null;
+      _dragOffset = Offset.zero;
+    });
   }
 
   void _onCardTap(BuildContext context, GameController game, PlayingCard card) {
@@ -711,17 +799,15 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
 
-    // 5. Valid move: play card immediately if touchToThrow (default) or if tapped again
-    if (game.touchToThrow || _selectedCard == card) {
-      setState(() => _selectedCard = null);
-      HapticFeedback.mediumImpact();
-      SoundService.instance.playCardSlide();
-      game.humanPlayCard(card);
-    } else {
-      HapticFeedback.selectionClick();
-      SoundService.instance.playCardTap();
-      setState(() => _selectedCard = card);
-    }
+    // 5. Valid move: play card immediately in single tap (once mode)
+    setState(() {
+      _selectedCard = null;
+      _draggedCard = null;
+      _dragOffset = Offset.zero;
+    });
+    HapticFeedback.mediumImpact();
+    SoundService.instance.playCardSlide();
+    game.humanPlayCard(card);
   }
 
   void _showScoreboard(BuildContext context, GameController game) {

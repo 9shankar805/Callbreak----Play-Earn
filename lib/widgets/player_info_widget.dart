@@ -369,8 +369,9 @@ class CallbreakPlayerAvatar extends StatelessWidget {
     const cardWidth = 24.0;
     const cardHeight = 36.0;
 
-    // Outer container size — big enough to hold full arc
-    const boxSize = 110.0;
+    // Sized to avatar circle (48x48) so the avatar is placed flush with the widget edges
+    // without artificial padding or jumping when cards run out
+    const boxSize = 48.0;
 
     return SizedBox(
       width: boxSize,

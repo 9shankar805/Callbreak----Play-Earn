@@ -12,6 +12,10 @@ class PlayingCardWidget extends StatelessWidget {
   final double width;
   final double height;
   final VoidCallback? onTap;
+  final GestureDragStartCallback? onPanStart;
+  final GestureDragUpdateCallback? onPanUpdate;
+  final GestureDragEndCallback? onPanEnd;
+  final VoidCallback? onPanCancel;
 
   const PlayingCardWidget({
     super.key,
@@ -22,6 +26,10 @@ class PlayingCardWidget extends StatelessWidget {
     this.width = 54,
     this.height = 78,
     this.onTap,
+    this.onPanStart,
+    this.onPanUpdate,
+    this.onPanEnd,
+    this.onPanCancel,
   });
 
   @override
@@ -32,6 +40,10 @@ class PlayingCardWidget extends StatelessWidget {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
+      onPanStart: onPanStart,
+      onPanUpdate: onPanUpdate,
+      onPanEnd: onPanEnd,
+      onPanCancel: onPanCancel,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
         curve: Curves.easeOutCubic,

@@ -7,6 +7,7 @@ import '../../models/trick_model.dart';
 import '../../widgets/playing_card_widget.dart';
 import '../../widgets/animated_card_throw.dart';
 import '../../widgets/trick_sweep_overlay.dart';
+import '../../services/sound_service.dart';
 import '../controller/online_game_controller.dart';
 
 class OnlineGameScreen extends StatefulWidget {
@@ -18,6 +19,8 @@ class OnlineGameScreen extends StatefulWidget {
 
 class _OnlineGameScreenState extends State<OnlineGameScreen> {
   PlayingCard? _selectedCard;
+  PlayingCard? _draggedCard;
+  Offset _dragOffset = Offset.zero;
   final Map<String, Offset> _throwingCards = {};
   List<TrickPlay> _lastObservedTrick = [];
 
@@ -28,11 +31,11 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
       case 0:
         return Offset(size.width / 2, size.height - 45); // You
       case 1:
-        return Offset(size.width - 45, size.height / 2 - 20); // Right
+        return Offset(size.width - 28, size.height / 2 - 20); // Right
       case 2:
-        return Offset(size.width / 2, 42); // Top
+        return Offset(size.width / 2, 32); // Top
       case 3:
-        return Offset(45, size.height / 2 - 20); // Left
+        return Offset(28, size.height / 2 - 20); // Left
       default:
         return Offset(size.width / 2, size.height / 2);
     }
@@ -94,14 +97,15 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
       return;
     }
 
-    if (_selectedCard == card) {
-      // Double-tap / second tap confirms the play
-      ctrl.playCard(card);
-      setState(() => _selectedCard = null);
-    } else {
-      ctrl.selectCard(card);
-      setState(() => _selectedCard = card);
-    }
+    // Single tap throws immediately in once mode
+    setState(() {
+      _selectedCard = null;
+      _draggedCard = null;
+      _dragOffset = Offset.zero;
+    });
+    HapticFeedback.mediumImpact();
+    SoundService.instance.playCardSlide();
+    ctrl.playCard(card);
   }
 
   void _showScoreboard(BuildContext context, OnlineGameController ctrl) {
@@ -159,6 +163,8 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
                 SafeArea(
                   top: false,
                   bottom: false,
+                  left: false,
+                  right: false,
                   child: Stack(
                     children: [
                       // Scoreboard button
@@ -269,9 +275,9 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
                       },
                       seatTargetOffsets: {
                         ctrl.localSeat: Offset(screenSize.width / 2, screenSize.height - 45),
-                        (ctrl.localSeat + 1) % 4: Offset(screenSize.width - 45, screenSize.height / 2 - 20),
-                        (ctrl.localSeat + 2) % 4: Offset(screenSize.width / 2, 42),
-                        (ctrl.localSeat + 3) % 4: Offset(45, screenSize.height / 2 - 20),
+                        (ctrl.localSeat + 1) % 4: Offset(screenSize.width - 28, screenSize.height / 2 - 20),
+                        (ctrl.localSeat + 2) % 4: Offset(screenSize.width / 2, 32),
+                        (ctrl.localSeat + 3) % 4: Offset(28, screenSize.height / 2 - 20),
                       },
                       onCompleted: () {},
                     ),
@@ -532,37 +538,112 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
       final spacing = ((usable - cardW) / count.clamp(1, 13)).clamp(22.0, 52.0);
       final totalW  = cardW + spacing * (count - 1);
 
+      // Keep all cards in tree with ValueKey(card.id); order so dragging card is on top
+      final renderCards = List<PlayingCard>.from(ctrl.myHand);
+      if (_draggedCard != null && renderCards.contains(_draggedCard)) {
+        renderCards.remove(_draggedCard);
+        renderCards.add(_draggedCard!);
+      }
+
       return SizedBox(
         height: cardH + 18,
         width: totalW,
         child: Stack(
           clipBehavior: Clip.none,
-          children: List.generate(count, (i) {
-            final card    = ctrl.myHand[i];
+          children: renderCards.map((card) {
+            final originalIdx = ctrl.myHand.indexOf(card);
             final isLegal = ctrl.legalMoves.contains(card);
-            final isSel   = _selectedCard == card;
-            return AnimatedPositioned(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOutQuad,
-              left: i * spacing,
-              bottom: isSel ? 16 : 0,
-              child: AnimatedScale(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOutQuad,
-                scale: isSel ? 1.05 : 1.0,
+            final isSel = _selectedCard == card;
+            final isDragging = _draggedCard == card;
+            final isThrowReady = isDragging && _dragOffset.dy < -25;
+            final currentOffset = isDragging ? _dragOffset : Offset.zero;
+
+            return Positioned(
+              key: ValueKey(card.id),
+              left: originalIdx * spacing + currentOffset.dx,
+              bottom: isDragging
+                  ? (-currentOffset.dy).clamp(0.0, 350.0)
+                  : (isSel ? 16.0 : 0.0),
+              child: Transform.scale(
+                scale: isThrowReady ? 1.15 : (isDragging ? 1.08 : (isSel ? 1.05 : 1.0)),
                 child: PlayingCardWidget(
-                  card:       card,
-                  width:      cardW,
-                  height:     cardH,
-                  isLegal:    ctrl.phase == OnlinePhase.playing ? isLegal : true,
-                  isSelected: isSel,
-                  onTap:      () => _onCardTap(context, ctrl, card),
+                  card: card,
+                  width: cardW,
+                  height: cardH,
+                  isLegal: ctrl.phase == OnlinePhase.playing ? isLegal : true,
+                  isSelected: isThrowReady || isSel,
+                  onTap: () => _onCardTap(context, ctrl, card),
+                  onPanStart: (details) => _onCardPanStart(ctrl, card, details),
+                  onPanUpdate: (details) => _onCardPanUpdate(card, details),
+                  onPanEnd: (details) => _onCardPanEnd(context, ctrl, card, details),
+                  onPanCancel: _onCardPanCancel,
                 ),
               ),
             );
-          }),
+          }).toList(),
         ),
       );
+    });
+  }
+
+  void _onCardPanStart(OnlineGameController ctrl, PlayingCard card, DragStartDetails details) {
+    if (ctrl.phase != OnlinePhase.playing || !ctrl.isMyTurn) return;
+
+    setState(() {
+      _draggedCard = card;
+      _dragOffset = Offset.zero;
+    });
+    HapticFeedback.selectionClick();
+  }
+
+  void _onCardPanUpdate(PlayingCard card, DragUpdateDetails details) {
+    if (_draggedCard != card) return;
+    setState(() {
+      _dragOffset = Offset(
+        (_dragOffset.dx + details.delta.dx).clamp(-180.0, 180.0),
+        (_dragOffset.dy + details.delta.dy).clamp(-350.0, 10.0),
+      );
+    });
+  }
+
+  void _onCardPanEnd(BuildContext context, OnlineGameController ctrl, PlayingCard card, DragEndDetails details) {
+    if (_draggedCard != card) return;
+
+    final isThrow = _dragOffset.dy < -25 || details.velocity.pixelsPerSecond.dy < -80;
+    if (isThrow && ctrl.phase == OnlinePhase.playing && ctrl.isMyTurn) {
+      final isLegal = ctrl.legalMoves.contains(card);
+      if (isLegal) {
+        setState(() {
+          _draggedCard = null;
+          _dragOffset = Offset.zero;
+          _selectedCard = null;
+        });
+        HapticFeedback.mediumImpact();
+        SoundService.instance.playCardSlide();
+        ctrl.playCard(card);
+        return;
+      } else {
+        HapticFeedback.heavyImpact();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Must follow the led suit'),
+            duration: Duration(seconds: 1),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
+
+    setState(() {
+      _draggedCard = null;
+      _dragOffset = Offset.zero;
+    });
+  }
+
+  void _onCardPanCancel() {
+    setState(() {
+      _draggedCard = null;
+      _dragOffset = Offset.zero;
     });
   }
 
